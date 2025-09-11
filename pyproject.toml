@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "qibo-flask-sqlalchemy"
+version = "0.3.0"
+description = "Flask + SQLAlchemy server and Python client for calibration/results uploads with CLI token and persistent client config."
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{ include = "server" }, { include = "client" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+flask = "^3.0.0"
+sqlalchemy = "^2.0.0"
+requests = "^2.32.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+
+[tool.poetry.scripts]
+qibodb-server = "server.app:main_cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
