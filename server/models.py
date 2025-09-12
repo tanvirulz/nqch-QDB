@@ -4,7 +4,7 @@ from sqlalchemy import Integer, String, LargeBinary, text, DateTime
 Base = declarative_base()
 
 class Calibration(Base):
-    __tablename__ = "uploads"
+    __tablename__ = "calibrations"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     hash_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)

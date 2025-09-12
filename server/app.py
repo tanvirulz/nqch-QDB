@@ -172,9 +172,19 @@ def main_cli():
     C = Config.load(cli_api_token=args.api_token)
     if args.api_token:
         Config.persist(api_token=args.api_token)
+        
+        # --- add near the bottom of server/app.py ---
+def create_app_from_env():
+    """Gunicorn-friendly factory that loads config from env/files."""
+    from .config import Config
+    C = Config.load(cli_api_token=None)  # merges ENV and server config file
+    return create_app(C)
+
 
     app = create_app(C)
     app.run(host=args.host, port=args.port, debug=C.DEBUG)
+
+
 
 if __name__ == "__main__":
     main_cli()
