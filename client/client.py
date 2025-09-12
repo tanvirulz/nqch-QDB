@@ -85,7 +85,7 @@ def _get_defaults(server_url: Optional[str], api_token: Optional[str]) -> Tuple[
     """
     cfg = _read_cfg()
     return (
-        server_url.rstrip("/") if server_url else cfg.get("server_url", "http://127.0.0.1:5000"),
+        server_url.rstrip("/") if server_url else cfg.get("server_url", "http://127.0.0.1:5050"),
         api_token if api_token is not None else cfg.get("api_token")
     )
 
@@ -180,7 +180,7 @@ def calibrations_download(
     hashID: str,
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
-) -> Tuple[Optional[str], str, bytes]:
+) -> Tuple[Optional[str], str, str, bytes]:
     """Download the latest calibration ZIP for a given `hashID`.
 
     Args:
@@ -195,6 +195,7 @@ def calibrations_download(
         Tuple of (notes, filename, data):
           - notes (Optional[str]): Notes saved with the record.
           - filename (str): Original ZIP filename returned by the server.
+          - created_at (str): UTC date-time for calibration entry to the db
           - data (bytes): Raw ZIP file contents.
     """
     server_url, api_token = _get_defaults(server_url, api_token)
@@ -204,7 +205,7 @@ def calibrations_download(
         raise requests.HTTPError(f"Download failed ({r.status_code}): {r.text}")
     payload = r.json()
     data = base64.b64decode(payload["data_b64"])
-    return payload.get("notes"), payload["filename"], data
+    return payload.get("notes"), payload["filename"], payload["created_at"], data
 
 
 def calibrations_get_latest(
@@ -285,13 +286,46 @@ def results_upload(
         raise requests.HTTPError(f"Upload failed ({resp.status_code}): {resp.text}")
     return resp.json()
 
+def results_list(
+    hashID: str,
+    server_url: Optional[str] = None,
+    api_token: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    List all result entries for a given hashID (newest first).
+
+    Args:
+        hashID: Identifier to match entries in the results table.
+        server_url: Optional override for the server base URL.
+        api_token: Optional override for the bearer token.
+
+    Raises:
+        requests.HTTPError: On server error (>=400).
+
+    Returns:
+        A list of dicts with keys:
+          - name (str)
+          - notes (Optional[str])
+          - created_at (str)
+    """
+    server_url, api_token = _get_defaults(server_url, api_token)
+    url = server_url + "/results/list"
+    r = requests.get(
+        url,
+        params={"hashID": hashID},
+        headers=_auth_headers(api_token),
+        timeout=120
+    )
+    if r.status_code >= 400:
+        raise requests.HTTPError(f"Results list failed ({r.status_code}): {r.text}")
+    return r.json().get("items", [])
 
 def results_download(
     hashID: str,
     name: str,
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
-) -> Tuple[Optional[str], str, bytes]:
+) -> Tuple[Optional[str], str,str, bytes]:
     """Download the latest results ZIP matching `hashID` and `name`.
 
     Args:
@@ -307,6 +341,7 @@ def results_download(
         Tuple of (notes, filename, data):
           - notes (Optional[str]): Notes saved with the result.
           - filename (str): Original ZIP filename returned by the server.
+          - created_at (str): UTC date-time of result entry to the db
           - data (bytes): Raw ZIP file contents.
     """
     server_url, api_token = _get_defaults(server_url, api_token)
@@ -316,7 +351,7 @@ def results_download(
         raise requests.HTTPError(f"Download failed ({r.status_code}): {r.text}")
     payload = r.json()
     data = base64.b64decode(payload["data_b64"])
-    return payload.get("notes"), payload["filename"], data
+    return payload.get("notes"), payload["filename"], payload["created_at"], data
 
 
 def unpack(foldername: str, zipdata: bytes) -> None:

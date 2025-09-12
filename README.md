@@ -134,7 +134,7 @@ items = calibrations_list()
 Download the **latest calibration zip** for `hashID`. Returns `(notes, filename, data_bytes)`.
 
 ```python
-notes, fname, zip_bytes = calibrations_download("abc123")
+notes, fname, created_at, zip_bytes = calibrations_download("abc123")
 ```
 
 #### calibrations_get_latest(server_url: Optional[str] = None, api_token: Optional[str] = None) -> Dict[str, Any]

@@ -78,7 +78,13 @@ def create_app(cfg) -> Flask:
                 select(Calibration).where(Calibration.hash_id == hash_id).order_by(desc(Calibration.created_at)).limit(1)
             ).scalar_one_or_none()
             if not r: return jsonify({"error": "not found"}), 404
-            return jsonify({"notes": r.notes, "filename": r.filename, "data_b64": base64.b64encode(r.data).decode("ascii")})
+            #return jsonify({"notes": r.notes, "filename": r.filename, "data_b64": base64.b64encode(r.data).decode("ascii")})
+            return jsonify({
+            "notes": r.notes,
+            "filename": r.filename,
+            "created_at": str(r.created_at),   # <-- added here
+            "data_b64": base64.b64encode(r.data).decode("ascii")
+            })
 
     @app.post("/results/upload")
     def results_upload():
@@ -100,6 +106,33 @@ def create_app(cfg) -> Flask:
         except Exception as e:
             return jsonify({"status": "error", "error": str(e)}), 500
 
+    @app.get("/results/list")
+    def results_list():
+        if not _check_auth(request, cfg.API_TOKEN):
+            return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
+        # Expect ?hashID=... as a query parameter
+        hash_id = (request.args.get("hashID") or "").strip()
+        if not hash_id:
+            return jsonify({"status": "error", "error": "hashID is required"}), 400
+
+        with SessionLocal() as ses:
+            rows = ses.execute(
+                select(Result)
+                .where(Result.hash_id == hash_id)
+                .order_by(desc(Result.created_at))
+            ).scalars().all()
+
+            items = [
+                {
+                    "name": r.name,
+                    "notes": r.notes,
+                    "created_at": str(r.created_at),
+                }
+                for r in rows
+            ]
+            return jsonify({"items": items})
+        
     @app.post("/results/download")
     def results_download():
         if not _check_auth(request, cfg.API_TOKEN):
@@ -114,8 +147,13 @@ def create_app(cfg) -> Flask:
                 select(Result).where(Result.hash_id == hash_id, Result.name == name).order_by(desc(Result.created_at)).limit(1)
             ).scalar_one_or_none()
             if not r: return jsonify({"error": "not found"}), 404
-            return jsonify({"notes": r.notes, "filename": r.filename, "data_b64": base64.b64encode(r.data).decode("ascii")})
-
+            #return jsonify({"notes": r.notes, "filename": r.filename, "data_b64": base64.b64encode(r.data).decode("ascii")})
+            return jsonify({
+                "notes": r.notes,
+                "filename": r.filename,
+                "created_at": str(r.created_at),  
+                "data_b64": base64.b64encode(r.data).decode("ascii")
+            })
     @app.get("/health")
     def health():
         return {"status": "ok"}
@@ -126,7 +164,7 @@ def main_cli():
     import argparse
     parser = argparse.ArgumentParser(description="Run QIBO DB Server (Flask + SQLAlchemy).")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default=5000, type=int)
+    parser.add_argument("--port", default=5050, type=int)
     parser.add_argument("--api-token", default=None, help="Set API token and persist to server config file.")
     args = parser.parse_args()
 
