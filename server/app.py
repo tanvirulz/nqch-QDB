@@ -23,7 +23,6 @@ def create_app(cfg) -> Flask:
     with engine.begin() as conn:
         Base.metadata.create_all(bind=conn)
 
-    @app.post("/upload")
     @app.post("/calibrations/upload")
     def cal_upload():
         if not _check_auth(request, cfg.API_TOKEN):
