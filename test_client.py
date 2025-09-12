@@ -6,6 +6,7 @@ from client.client import (
 
 #test()
 
+# use the api token in place of "very-secret-token"
 set_server(server_url="http://127.0.0.1:5050",api_token="very-secret-token")
 
 
