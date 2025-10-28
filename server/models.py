@@ -17,6 +17,11 @@ class Result(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     hash_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    experiment_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        index=True
+    )
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False), server_default=text("CURRENT_TIMESTAMP"))
     filename: Mapped[str] = mapped_column(String, nullable=False)

@@ -89,28 +89,50 @@ def create_app(cfg) -> Flask:
     def results_upload():
         if not _check_auth(request, cfg.API_TOKEN):
             return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
         hash_id = (request.form.get("hashID") or "").strip()
         name = (request.form.get("name") or "").strip()
+        experiment_id = (request.form.get("experimentID") or "").strip()  # NEW
         notes = (request.form.get("notes") or "").strip()
         file = request.files.get("archive")
-        if not hash_id: return jsonify({"status": "error", "error": "hashID is required"}), 400
-        if not name: return jsonify({"status": "error", "error": "name is required"}), 400
-        if not file or file.filename == "": return jsonify({"status": "error", "error": "archive file is required"}), 400
+
+        if not hash_id:
+            return jsonify({"status": "error", "error": "hashID is required"}), 400
+        if not name:
+            return jsonify({"status": "error", "error": "name is required"}), 400
+        if not file or file.filename == "":
+            return jsonify({"status": "error", "error": "archive file is required"}), 400
+
         data = file.read()
         try:
             with SessionLocal() as ses:
-                row = Result(hash_id=hash_id, name=name, notes=notes or None, filename=file.filename, data=data)
-                ses.add(row); ses.commit(); ses.refresh(row)
-                return jsonify({"status": "ok", "id": row.id, "created_at": str(row.created_at)})
+                row = Result(
+                    hash_id=hash_id,
+                    name=name,
+                    experiment_id=experiment_id or None,  # NEW
+                    notes=notes or None,
+                    filename=file.filename,
+                    data=data,
+                )
+                ses.add(row)
+                ses.commit()
+                ses.refresh(row)
+
+                return jsonify({
+                    "status": "ok",
+                    "id": row.id,
+                    "created_at": str(row.created_at),
+                    "experiment_id": row.experiment_id,  # NEW
+                })
         except Exception as e:
             return jsonify({"status": "error", "error": str(e)}), 500
+
 
     @app.get("/results/list")
     def results_list():
         if not _check_auth(request, cfg.API_TOKEN):
             return jsonify({"status": "error", "error": "Unauthorized"}), 401
 
-        # Expect ?hashID=... as a query parameter
         hash_id = (request.args.get("hashID") or "").strip()
         if not hash_id:
             return jsonify({"status": "error", "error": "hashID is required"}), 400
@@ -125,34 +147,53 @@ def create_app(cfg) -> Flask:
             items = [
                 {
                     "name": r.name,
+                    "experiment_id": r.experiment_id,  # NEW
                     "notes": r.notes,
                     "created_at": str(r.created_at),
                 }
                 for r in rows
             ]
             return jsonify({"items": items})
+
         
     @app.post("/results/download")
     def results_download():
         if not _check_auth(request, cfg.API_TOKEN):
             return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
         payload = request.get_json(silent=True) or request.form
         hash_id = (payload.get("hashID") or "").strip()
         name = (payload.get("name") or "").strip()
+        experiment_id = (payload.get("experimentID") or "").strip()  # NEW
+
         if not hash_id or not name:
             return jsonify({"status": "error", "error": "hashID and name are required"}), 400
+
         with SessionLocal() as ses:
-            r = ses.execute(
-                select(Result).where(Result.hash_id == hash_id, Result.name == name).order_by(desc(Result.created_at)).limit(1)
-            ).scalar_one_or_none()
-            if not r: return jsonify({"error": "not found"}), 404
-            #return jsonify({"notes": r.notes, "filename": r.filename, "data_b64": base64.b64encode(r.data).decode("ascii")})
+            stmt = select(Result).where(
+                Result.hash_id == hash_id,
+                Result.name == name
+            )
+
+            # If experimentID is provided, add it to the WHERE clause
+            if experiment_id:
+                stmt = stmt.where(Result.experiment_id == experiment_id)
+
+            stmt = stmt.order_by(desc(Result.created_at)).limit(1)
+            r = ses.execute(stmt).scalar_one_or_none()
+
+            if not r:
+                return jsonify({"error": "not found"}), 404
+
             return jsonify({
                 "notes": r.notes,
                 "filename": r.filename,
-                "created_at": str(r.created_at),  
-                "data_b64": base64.b64encode(r.data).decode("ascii")
+                "created_at": str(r.created_at),
+                "experiment_id": r.experiment_id,
+                "data_b64": base64.b64encode(r.data).decode("ascii"),
             })
+
+
     @app.get("/health")
     def health():
         return {"status": "ok"}

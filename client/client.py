@@ -243,48 +243,69 @@ def results_upload(
     name: str,
     notes: str,
     files: List[str],
+    experimentID: Optional[str] = None,  # NEW
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
 ) -> dict:
-    """Create a ZIP from `files` and upload it to the `results` table.
+    """
+    Create a ZIP from `files` and upload it as a "result" bundle.
 
     Args:
-        hashID: Identifier used to correlate results with a calibration or run.
-        name: Logical name/grouping for this result (e.g., "daily-check").
-        notes: Free-form notes for this result.
-        files: List of file paths to include in the ZIP archive.
-        server_url: Base server URL; if omitted, uses saved config or defaults to
-            "http://127.0.0.1:5000".
-        api_token: Optional bearer token; if omitted, uses saved config.
-
-    Raises:
-        ValueError: If `files` is empty.
-        FileNotFoundError: If any file path does not exist.
-        requests.HTTPError: If the server returns an error response.
+        hashID: Required. Identifier tying related results together.
+        name: Required. Logical name/group for this particular result.
+        notes: Free-form notes.
+        files: List of file paths to include in the ZIP.
+        experimentID: Optional string to tag this result with an experiment.
+        server_url: Override server URL; otherwise use stored default.
+        api_token: Override API token; otherwise use stored default.
 
     Returns:
-        dict: The server's JSON response (e.g., {"status":"ok","id":1,"created_at":"..."}).
+        dict with keys like:
+          {
+            "status": "ok",
+            "id": <int>,
+            "created_at": "<timestamp>",
+            "experiment_id": "<experimentID or null>"
+          }
     """
     server_url, api_token = _get_defaults(server_url, api_token)
+
     if not files:
-        raise ValueError("Provide at least one file to upload.")
-    for p in files:
-        if not os.path.isfile(p):
-            raise FileNotFoundError(f"File not found: {p}")
+        raise ValueError("No files provided for upload.")
 
-    mem_zip = io.BytesIO()
-    with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+    # create in-memory zip
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in files:
-            zf.write(p, arcname=os.path.basename(p))
-    mem_zip.seek(0)
+            pth = Path(p)
+            if not pth.exists():
+                raise FileNotFoundError(f"File not found: {pth}")
+            zf.write(pth, arcname=pth.name)
+    mem.seek(0)
+    zip_bytes = mem.read()
 
-    files_payload = {"archive": ("results_bundle.zip", mem_zip.read(), "application/zip")}
-    data_payload = {"hashID": hashID, "name": name, "notes": notes or ""}
     url = server_url + "/results/upload"
-    resp = requests.post(url, data=data_payload, files=files_payload, headers=_auth_headers(api_token), timeout=300)
-    if resp.status_code >= 400:
-        raise requests.HTTPError(f"Upload failed ({resp.status_code}): {resp.text}")
-    return resp.json()
+    multipart = {
+        "hashID": (None, hashID),
+        "name": (None, name),
+        "notes": (None, notes or ""),
+        "archive": ("bundle.zip", zip_bytes, "application/zip"),
+    }
+
+    # NEW: only send experimentID if provided
+    if experimentID is not None:
+        multipart["experimentID"] = (None, experimentID)
+
+    r = requests.post(
+        url,
+        files=multipart,
+        headers=_auth_headers(api_token),
+        timeout=300
+    )
+    if r.status_code >= 400:
+        raise requests.HTTPError(f"Upload failed ({r.status_code}): {r.text}")
+    return r.json()
+
 
 def results_list(
     hashID: str,
@@ -292,24 +313,19 @@ def results_list(
     api_token: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
-    List all result entries for a given hashID (newest first).
+    List all results rows that share the same hashID.
 
-    Args:
-        hashID: Identifier to match entries in the results table.
-        server_url: Optional override for the server base URL.
-        api_token: Optional override for the bearer token.
-
-    Raises:
-        requests.HTTPError: On server error (>=400).
-
-    Returns:
-        A list of dicts with keys:
-          - name (str)
-          - notes (Optional[str])
-          - created_at (str)
+    Returns a list of dicts, newest first:
+      {
+        "name": str,
+        "experiment_id": Optional[str],  # NEW
+        "notes": Optional[str],
+        "created_at": str,
+      }
     """
     server_url, api_token = _get_defaults(server_url, api_token)
     url = server_url + "/results/list"
+
     r = requests.get(
         url,
         params={"hashID": hashID},
@@ -320,38 +336,61 @@ def results_list(
         raise requests.HTTPError(f"Results list failed ({r.status_code}): {r.text}")
     return r.json().get("items", [])
 
+
+
 def results_download(
     hashID: str,
     name: str,
+    experimentID: Optional[str] = None,  # NEW
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
-) -> Tuple[Optional[str], str,str, bytes]:
-    """Download the latest results ZIP matching `hashID` and `name`.
+) -> Tuple[Optional[str], str, str, Optional[str], bytes]:
+    """
+    Download the most recent result matching (hashID, name),
+    and optionally filter by experimentID.
 
     Args:
-        hashID: Identifier to match entries in the results table.
-        name: Logical result name/group to match.
-        server_url: Optional override for the server base URL.
-        api_token: Optional override for the bearer token.
-
-    Raises:
-        requests.HTTPError: On server error or not found (4xx/5xx).
+        hashID: Required identifier group.
+        name: Result name to download.
+        experimentID: Optional filter; only match results from this experiment.
+        server_url, api_token: Overrides.
 
     Returns:
-        Tuple of (notes, filename, data):
-          - notes (Optional[str]): Notes saved with the result.
-          - filename (str): Original ZIP filename returned by the server.
-          - created_at (str): UTC date-time of result entry to the db
-          - data (bytes): Raw ZIP file contents.
+        (
+            notes,          # Optional[str]
+            filename,       # str
+            created_at,     # str
+            experiment_id,  # Optional[str]
+            data_bytes      # bytes
+        )
     """
     server_url, api_token = _get_defaults(server_url, api_token)
     url = server_url + "/results/download"
-    r = requests.post(url, json={"hashID": hashID, "name": name}, headers=_auth_headers(api_token), timeout=300)
+
+    payload = {"hashID": hashID, "name": name}
+    if experimentID is not None:  # send only if provided
+        payload["experimentID"] = experimentID
+
+    r = requests.post(
+        url,
+        json=payload,
+        headers=_auth_headers(api_token),
+        timeout=300
+    )
     if r.status_code >= 400:
         raise requests.HTTPError(f"Download failed ({r.status_code}): {r.text}")
+
     payload = r.json()
-    data = base64.b64decode(payload["data_b64"])
-    return payload.get("notes"), payload["filename"], payload["created_at"], data
+    data_bytes = base64.b64decode(payload["data_b64"])
+
+    return (
+        payload.get("notes"),
+        payload["filename"],
+        payload["created_at"],
+        payload.get("experiment_id"),
+        data_bytes,
+    )
+
 
 
 def unpack(foldername: str, zipdata: bytes) -> None:
