@@ -61,7 +61,8 @@ def create_app(cfg) -> Flask:
             return jsonify({"status": "error", "error": "Unauthorized"}), 401
         with SessionLocal() as ses:
             r = ses.execute(select(Calibration).order_by(desc(Calibration.created_at)).limit(1)).scalar_one_or_none()
-            if not r: return jsonify({"error": "no calibrations"}), 404
+            if not r:
+                return jsonify({"error": "no calibrations"}), 404
             return jsonify({"hashID": r.hash_id, "notes": r.notes, "created_at": str(r.created_at)})
 
     @app.post("/calibrations/download")
@@ -76,13 +77,13 @@ def create_app(cfg) -> Flask:
             r = ses.execute(
                 select(Calibration).where(Calibration.hash_id == hash_id).order_by(desc(Calibration.created_at)).limit(1)
             ).scalar_one_or_none()
-            if not r: return jsonify({"error": "not found"}), 404
-            #return jsonify({"notes": r.notes, "filename": r.filename, "data_b64": base64.b64encode(r.data).decode("ascii")})
+            if not r:
+                return jsonify({"error": "not found"}), 404
             return jsonify({
-            "notes": r.notes,
-            "filename": r.filename,
-            "created_at": str(r.created_at),   # <-- added here
-            "data_b64": base64.b64encode(r.data).decode("ascii")
+                "notes": r.notes,
+                "filename": r.filename,
+                "created_at": str(r.created_at),
+                "data_b64": base64.b64encode(r.data).decode("ascii")
             })
 
     @app.post("/results/upload")
@@ -92,7 +93,7 @@ def create_app(cfg) -> Flask:
 
         hash_id = (request.form.get("hashID") or "").strip()
         name = (request.form.get("name") or "").strip()
-        experiment_id = (request.form.get("experimentID") or "").strip()  # NEW
+        experiment_id = (request.form.get("experimentID") or "").strip()
         notes = (request.form.get("notes") or "").strip()
         file = request.files.get("archive")
 
@@ -109,7 +110,7 @@ def create_app(cfg) -> Flask:
                 row = Result(
                     hash_id=hash_id,
                     name=name,
-                    experiment_id=experiment_id or None,  # NEW
+                    experiment_id=experiment_id or None,
                     notes=notes or None,
                     filename=file.filename,
                     data=data,
@@ -122,11 +123,10 @@ def create_app(cfg) -> Flask:
                     "status": "ok",
                     "id": row.id,
                     "created_at": str(row.created_at),
-                    "experiment_id": row.experiment_id,  # NEW
+                    "experiment_id": row.experiment_id,
                 })
         except Exception as e:
             return jsonify({"status": "error", "error": str(e)}), 500
-
 
     @app.get("/results/list")
     def results_list():
@@ -147,7 +147,7 @@ def create_app(cfg) -> Flask:
             items = [
                 {
                     "name": r.name,
-                    "experiment_id": r.experiment_id,  # NEW
+                    "experiment_id": r.experiment_id,
                     "notes": r.notes,
                     "created_at": str(r.created_at),
                 }
@@ -155,7 +155,6 @@ def create_app(cfg) -> Flask:
             ]
             return jsonify({"items": items})
 
-        
     @app.post("/results/download")
     def results_download():
         if not _check_auth(request, cfg.API_TOKEN):
@@ -164,7 +163,7 @@ def create_app(cfg) -> Flask:
         payload = request.get_json(silent=True) or request.form
         hash_id = (payload.get("hashID") or "").strip()
         name = (payload.get("name") or "").strip()
-        experiment_id = (payload.get("experimentID") or "").strip()  # NEW
+        experiment_id = (payload.get("experimentID") or "").strip()
 
         if not hash_id or not name:
             return jsonify({"status": "error", "error": "hashID and name are required"}), 400
@@ -174,8 +173,6 @@ def create_app(cfg) -> Flask:
                 Result.hash_id == hash_id,
                 Result.name == name
             )
-
-            # If experimentID is provided, add it to the WHERE clause
             if experiment_id:
                 stmt = stmt.where(Result.experiment_id == experiment_id)
 
@@ -193,38 +190,30 @@ def create_app(cfg) -> Flask:
                 "data_b64": base64.b64encode(r.data).decode("ascii"),
             })
 
-
     @app.get("/health")
     def health():
         return {"status": "ok"}
 
     return app
 
+def create_app_from_env():
+    """Gunicorn-friendly factory that loads config from env/files."""
+    C = Config.load(cli_api_token=None)  # merges ENV and server config file
+    return create_app(C)
+
 def main_cli():
-    import argparse
     parser = argparse.ArgumentParser(description="Run QIBO DB Server (Flask + SQLAlchemy).")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=5050, type=int)
     parser.add_argument("--api-token", default=None, help="Set API token and persist to server config file.")
     args = parser.parse_args()
 
-    from .config import Config
     C = Config.load(cli_api_token=args.api_token)
     if args.api_token:
         Config.persist(api_token=args.api_token)
-        
-        # --- add near the bottom of server/app.py ---
-def create_app_from_env():
-    """Gunicorn-friendly factory that loads config from env/files."""
-    from .config import Config
-    C = Config.load(cli_api_token=None)  # merges ENV and server config file
-    return create_app(C)
-
 
     app = create_app(C)
     app.run(host=args.host, port=args.port, debug=C.DEBUG)
-
-
 
 if __name__ == "__main__":
     main_cli()
