@@ -3,7 +3,9 @@ from flask import Flask, request, jsonify
 from sqlalchemy import select, desc
 from .config import Config
 from .db import make_engine, make_session_factory
-from .models import Base, Calibration, Result
+from .models import Base, Calibration, Result,BestRun
+
+
 
 def _check_auth(req, api_token) -> bool:
     if api_token is None:
@@ -22,6 +24,102 @@ def create_app(cfg) -> Flask:
     SessionLocal = make_session_factory(engine)
     with engine.begin() as conn:
         Base.metadata.create_all(bind=conn)
+
+    @app.post("/bestruns/set")
+    def bestruns_set():
+        if not _check_auth(request, cfg.API_TOKEN):
+            return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
+        payload = request.get_json(silent=True) or request.form
+        calibration_hash_id = (payload.get("calibrationHashID") or "").strip()
+        run_id = (payload.get("runID") or "").strip()
+
+        if not calibration_hash_id:
+            return jsonify({"status": "error", "error": "calibrationHashID is required"}), 400
+        if not run_id:
+            return jsonify({"status": "error", "error": "runID is required"}), 400
+
+        try:
+            with SessionLocal() as ses:
+                row = BestRun(
+                    calibration_hash_id=calibration_hash_id,
+                    run_id=run_id,
+                )
+                ses.add(row)
+                ses.commit()
+                ses.refresh(row)
+
+                return jsonify({
+                    "status": "ok",
+                    "id": row.id,
+                    "calibration_hash_id": row.calibration_hash_id,
+                    "run_id": row.run_id,
+                    "created_at": str(row.created_at),
+                })
+        except Exception as e:
+            return jsonify({"status": "error", "error": str(e)}), 500
+    
+    @app.get("/bestruns/get")
+    def bestruns_get():
+        if not _check_auth(request, cfg.API_TOKEN):
+            return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
+        with SessionLocal() as ses:
+            row = ses.execute(
+                select(BestRun)
+                .order_by(desc(BestRun.id))
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if row is None:
+                return jsonify({"status": "error", "error": "no best run set"}), 404
+
+            return jsonify({
+                "status": "ok",
+                "id": row.id,
+                "calibration_hash_id": row.calibration_hash_id,
+                "run_id": row.run_id,
+                "created_at": str(row.created_at),
+            })
+    @app.get("/bestruns/list")
+    def bestruns_list():
+        if not _check_auth(request, cfg.API_TOKEN):
+            return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
+        # optional ?limit=N, default 10
+        raw_limit = request.args.get("limit", "").strip()
+        try:
+            limit = int(raw_limit) if raw_limit else 10
+        except ValueError:
+            return jsonify({"status": "error", "error": "limit must be an integer"}), 400
+
+        # safety clamp
+        if limit <= 0:
+            limit = 1
+        if limit > 100:
+            limit = 100
+
+        with SessionLocal() as ses:
+            rows = ses.execute(
+                select(BestRun)
+                .order_by(desc(BestRun.id))
+                .limit(limit)
+            ).scalars().all()
+
+            items = [
+                {
+                    "id": r.id,
+                    "calibration_hash_id": r.calibration_hash_id,
+                    "run_id": r.run_id,
+                    "created_at": str(r.created_at),
+                }
+                for r in rows
+            ]
+
+            return jsonify({
+                "status": "ok",
+                "items": items,
+            })
 
     @app.post("/calibrations/upload")
     def cal_upload():

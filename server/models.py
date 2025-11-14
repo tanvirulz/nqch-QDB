@@ -26,3 +26,14 @@ class Result(Base):
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False), server_default=text("CURRENT_TIMESTAMP"))
     filename: Mapped[str] = mapped_column(String, nullable=False)
     data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+class BestRun(Base):
+    __tablename__ = "bestruns"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    calibration_hash_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=False),
+        server_default=text("CURRENT_TIMESTAMP")
+    )
+

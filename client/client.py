@@ -393,7 +393,116 @@ def results_download(
         data_bytes,
     )
 
+def set_best_run(
+    calibrationHashID: str,
+    runID: str,
+    server_url: Optional[str] = None,
+    api_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Mark a (calibrationHashID, runID) pair as the current best run.
+    """
+    server_url, api_token = _get_defaults(server_url, api_token)
+    url = server_url + "/bestruns/set"
 
+    payload = {
+        "calibrationHashID": calibrationHashID,
+        "runID": runID,
+    }
+
+    r = requests.post(
+        url,
+        json=payload,
+        headers=_auth_headers(api_token),
+        timeout=60,
+    )
+
+    if r.status_code >= 400:
+        raise requests.HTTPError(f"set_best_run failed ({r.status_code}): {r.text}")
+
+    return r.json()
+
+def get_best_run(
+    server_url: Optional[str] = None,
+    api_token: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """
+    Returns (calibration_hash_id, run_id, created_at)
+    from the most recently inserted best run.
+    """
+    server_url, api_token = _get_defaults(server_url, api_token)
+    url = server_url + "/bestruns/get"
+
+    r = requests.get(
+        url,
+        headers=_auth_headers(api_token),
+        timeout=60,
+    )
+
+    if r.status_code >= 400:
+        raise requests.HTTPError(f"get_best_run failed ({r.status_code}): {r.text}")
+
+    payload = r.json()
+    if payload.get("status") != "ok":
+        raise requests.HTTPError(f"Server error: {payload}")
+
+    return (
+        payload["calibration_hash_id"],
+        payload["run_id"],
+        payload["created_at"],
+    )
+
+from typing import List, Tuple, Optional, Dict, Any
+import requests
+# ... existing imports & helpers ...
+
+
+def get_best_n_runs(
+    n: int,
+    server_url: Optional[str] = None,
+    api_token: Optional[str] = None,
+) -> List[Tuple[str, str, str]]:
+    """
+    Get up to `n` previous best runs.
+
+    Returns a list of tuples:
+        [
+          (calibration_hash_id, run_id, created_at),
+          ...
+        ]
+    ordered from newest (most recent best run) to oldest,
+    up to the requested limit `n`.
+    """
+    if n <= 0:
+        raise ValueError("n must be a positive integer")
+
+    server_url, api_token = _get_defaults(server_url, api_token)
+    url = server_url + "/bestruns/list"
+
+    r = requests.get(
+        url,
+        params={"limit": n},
+        headers=_auth_headers(api_token),
+        timeout=60,
+    )
+    if r.status_code >= 400:
+        raise requests.HTTPError(f"get_best_n_runs failed ({r.status_code}): {r.text}")
+
+    payload = r.json()
+    if payload.get("status") != "ok":
+        raise requests.HTTPError(f"Server error in get_best_n_runs: {payload}")
+
+    items = payload.get("items", [])
+    result: List[Tuple[str, str, str]] = []
+    for it in items:
+        result.append(
+            (
+                str(it["calibration_hash_id"]),
+                str(it["run_id"]),
+                str(it["created_at"]),
+            )
+        )
+    return result
 
 def unpack(foldername: str, zipdata: bytes) -> None:
     """

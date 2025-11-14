@@ -90,3 +90,4 @@ htmlcov/
 
 # Local data
 data/
+*.zip
