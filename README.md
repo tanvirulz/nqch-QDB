@@ -1,209 +1,195 @@
-# QIBO DB Server (Flask + SQLAlchemy) & Python Client
+# QiboDB Client API (Run ID Version)
 
-Store **calibrations** and **results** as zipped blobs in a SQLAlchemy-backed database (SQLite by default).  
-Includes a Python client with convenience helpers and persistent client config.
-
-## Requirements
-- Python **3.10+**
-- [Poetry](https://python-poetry.org/docs/#installation)
+The **QiboDB Client** is a lightweight Python interface for interacting with the QiboDB server.  
+This version uses **runID** instead of experimentID.
 
 ---
 
-## Install & Run
+## 🧭 Overview
 
-> **Where to run `poetry`?**  
-> If your `pyproject.toml` is in the **project root** (as in the zip I provided), run the commands **from the project root** (don’t `cd server`).  
-> If you moved `pyproject.toml` inside `server/`, then run them from `server/`.
+Each record in QiboDB contains:
 
-### 1) Install
-```bash
-poetry install
-```
+- `hashID` — identifier linking related results  
+- `name` — name for a specific result/dataset  
+- `runID` — optional run identifier  
+- `notes` — optional metadata  
+- A binary archive (ZIP) containing data files  
 
-### 2) Start the server
-```bash
-poetry run qibodb-server --host 0.0.0.0 --port 5050 --api-token secret-token
-```
-
-**Environment variables (optional):**
-```bash
-# choose DB location/engine
-export QIBO_DB_URI="sqlite:///qibo.db"
-
-# set token via env instead of CLI
-export QIBO_API_TOKEN="secret-token"
-
-# turn on SQLAlchemy/Flask debug
-export QIBO_DEBUG=1
-```
-
-**Token persistence:**  
-If you pass `--api-token ...`, the server writes it to `~/.qibo_server.json` so you don’t have to set it every time.
+The client library handles communication, authentication, ZIP creation, and decoding.
 
 ---
 
-## API (server)
+## ⚙️ Installation
 
-All endpoints require the header `Authorization: Bearer <token>` if a token is configured.
+Install dependencies:
 
-### Health
-- `GET /health` → `{"status":"ok"}`
+```bash
+pip install requests
+```
 
-### Calibrations
-- `POST /calibrations/upload` (alias: `POST /upload`)  
-  **form fields:** `hashID`, `notes`  
-  **file:** `archive` (zip)  
-  **returns:** `{"status":"ok","id":<int>,"created_at":"<ts>"}`
-
-- `GET /calibrations/list`  
-  **returns:** `{"items":[{id,hashID,notes,created_at,filename,size}]}`
-
-- `GET /calibrations/latest`  
-  **returns:** `{"hashID": "...", "notes": "...", "created_at": "..."}` (404 if none)
-
-- `POST /calibrations/download`  
-  **json/form:** `{"hashID":"..."}`  
-  **returns:** `{"notes": "...", "filename": "...", "data_b64": "..."}`
-
-### Results
-- `POST /results/upload`  
-  **form fields:** `hashID`, `name`, `notes`  
-  **file:** `archive` (zip)  
-  **returns:** `{"status":"ok","id":<int>,"created_at":"<ts>"}`
-
-- `POST /results/download`  
-  **json/form:** `{"hashID":"...","name":"..."}`  
-  **returns:** `{"notes": "...", "filename": "...", "data_b64": "..."}` (latest match)
+Ensure the `client/` directory is importable in your Python project.
 
 ---
 
-## Python Client
+## 🔑 Authentication
 
-### Persistent client config
-The client stores defaults in `~/.qibo_client.json` (or `QIBO_CLIENT_CONFIG` path).
+The server requires an API token. You may set it:
 
+### Option 1 — Pass explicitly  
 ```python
-from client.client import set_server
-
-# Save defaults so you can omit server_url/api_token later
-set_server("http://127.0.0.1:5050", api_token="secret-token")
+results_upload(..., api_token="your_token")
 ```
 
-### Functions
-
-```python
-from typing import List, Tuple, Dict, Any, Optional
-from client.client import (
-    set_server,
-    calibrations_upload,      
-    calibrations_list,
-    calibrations_download,
-    calibrations_get_latest,
-    results_upload,
-    results_download,
-)
+### Option 2 — Environment variable
+```bash
+export QIBODB_API_TOKEN="your_token"
 ```
 
-#### set_server(server_url: str, api_token: Optional[str] = None) -> None
-Persist default server URL and optional API token to the client config.
+---
 
-#### calibrations_upload(hashID: str, notes: str, files: List[str], server_url: Optional[str] = None, api_token: Optional[str] = None) -> dict
-Create an in-memory **ZIP** from `files` and upload it as a **calibration**.
+## 🌍 Server URL Configuration
+
+Either pass a server URL:
 
 ```python
-resp = calibrations_upload(
+results_list("abc123", server_url="https://your.server")
+```
+
+Or set it globally:
+
+```bash
+export QIBODB_SERVER_URL="https://your.server"
+```
+
+---
+
+## 🧩 Client API
+
+### 1. `results_upload()`
+
+Uploads a ZIP archive containing the provided files.
+
+```python
+from client.client import results_upload
+
+results_upload(
     hashID="abc123",
-    notes="first batch",
-    files=["/path/a.txt", "/path/b.txt"]   # list-based!
+    name="run1",
+    notes="baseline measurement",
+    runID="run_001",                 # optional
+    files=["output.csv", "log.txt"], # file paths
+    server_url="https://your.server",
+    api_token="your_token"
 )
 ```
 
-**Returns** a JSON dict like:
-```python
-{"status":"ok","id":1,"created_at":"2025-09-11 12:34:56"}
+**Returns:**
+```json
+{
+  "status": "ok",
+  "id": 31,
+  "created_at": "2025-11-01 10:22:01",
+  "run_id": "run_001"
+}
 ```
 
-#### calibrations_list(server_url: Optional[str] = None, api_token: Optional[str] = None) -> List[Dict[str, Any]]
-Fetch metadata for all calibration uploads (newest first).
+---
+
+### 2. `results_list()`
+
+Lists all results for a given `hashID`.
 
 ```python
-items = calibrations_list()
+from client.client import results_list
+
+items = results_list("abc123")
+print(items)
 ```
 
-#### calibrations_download(hashID: str, server_url: Optional[str] = None, api_token: Optional[str] = None) -> Tuple[Optional[str], str, bytes]
-Download the **latest calibration zip** for `hashID`. Returns `(notes, filename, data_bytes)`.
+**Example output:**
 
-```python
-notes, fname, created_at, zip_bytes = calibrations_download("abc123")
+```json
+[
+  {
+    "name": "run1",
+    "run_id": "run_001",
+    "notes": "baseline test",
+    "created_at": "2025-11-01 10:22:01"
+  }
+]
 ```
 
-#### calibrations_get_latest(server_url: Optional[str] = None, api_token: Optional[str] = None) -> Dict[str, Any]
-Get metadata for the most recent calibration overall.
+---
+
+### 3. `results_download()`
+
+Downloads the most recent result for `(hashID, name)`.  
+Optionally restrict by `runID`.
 
 ```python
-latest = calibrations_get_latest()
-# {"hashID": "...", "notes": "...", "created_at": "..."}  or {}
-```
+from client.client import results_download
 
-#### results_upload(hashID: str, name: str, notes: str, files: List[str], server_url: Optional[str] = None, api_token: Optional[str] = None) -> dict
-Create an in-memory **ZIP** from `files` and upload to the **results** table.
-
-```python
-resp = results_upload(
+notes, filename, created_at, run_id, data = results_download(
     hashID="abc123",
-    name="daily-check",
-    notes="passed",
-    files=["/tmp/out.csv"]
+    name="run1",
+    runID="run_001"    # optional
 )
+
+with open(filename, "wb") as f:
+    f.write(data)
 ```
 
-#### results_download(hashID: str, name: str, server_url: Optional[str] = None, api_token: Optional[str] = None) -> Tuple[Optional[str], str, bytes]
-Download the **latest results zip** matching both `hashID` and `name`. Returns `(notes, filename, data_bytes)`.
+**Returns tuple:**
+```
+(notes, filename, created_at, run_id, data_bytes)
+```
+
+---
+
+## 🧰 Example Workflow
 
 ```python
-notes, fname, zip_bytes = results_download("abc123", "daily-check")
+from client.client import results_upload, results_list, results_download
+
+# Upload
+results_upload(
+    hashID="qkd001",
+    name="alignment_1",
+    notes="test alignment",
+    runID="runA",
+    files=["data.csv", "config.yml"]
+)
+
+# List
+print(results_list("qkd001"))
+
+# Download
+notes, fname, created_at, rid, blob = results_download(
+    "qkd001",
+    "alignment_1",
+    runID="runA"
+)
+
+with open(fname, "wb") as f:
+    f.write(blob)
 ```
 
 ---
 
-## Unpacking a ZIP returned by the client
+## 🛡️ Error Handling
+
+All functions raise `requests.HTTPError` on failures.
 
 ```python
-import os, io, zipfile
-
-def unpack(foldername: str, zipdata: bytes) -> None:
-    os.makedirs(foldername, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(zipdata)) as zf:
-        zf.extractall(foldername)
-
-# Example:
-notes, fname, data = calibrations_download("abc123")
-unpack("./calib_abc123", data)
+try:
+    results_download("abc123", "missing")
+except requests.HTTPError as e:
+    print("Error:", e)
 ```
 
 ---
 
-## cURL examples
+## 🧾 License
 
-```bash
-# Upload a calibration
-curl -X POST "http://127.0.0.1:5050/calibrations/upload"   -H "Authorization: Bearer secret-token"   -F "hashID=abc123"   -F "notes=first batch"   -F "archive=@/path/bundle.zip"
-
-# Latest calibration meta
-curl -X GET "http://127.0.0.1:5050/calibrations/latest"   -H "Authorization: Bearer secret-token"
-
-# Download latest calibration for a hashID
-curl -X POST "http://127.0.0.1:5050/calibrations/download"   -H "Authorization: Bearer secret-token"   -H "Content-Type: application/json"   -d '{"hashID":"abc123"}'
-```
-
----
-
-## Notes & Tips
-- For large files, adjust `QIBO_MAX_UPLOAD_BYTES` on the server (defaults to **500MB**).
-- SQLite is the default DB; switch to Postgres/MySQL by setting `QIBO_DB_URI` to a valid SQLAlchemy URI.
-- Consider adding auth + rate limiting if you expose this server on a public network.
-
----
-
-## License
-MIT (or your choice).
+MIT License © 2025  
+Developed by **Tanvirul Zaman**

@@ -93,7 +93,7 @@ def create_app(cfg) -> Flask:
 
         hash_id = (request.form.get("hashID") or "").strip()
         name = (request.form.get("name") or "").strip()
-        experiment_id = (request.form.get("experimentID") or "").strip()
+        run_id = (request.form.get("runID") or "").strip()
         notes = (request.form.get("notes") or "").strip()
         file = request.files.get("archive")
 
@@ -110,7 +110,7 @@ def create_app(cfg) -> Flask:
                 row = Result(
                     hash_id=hash_id,
                     name=name,
-                    experiment_id=experiment_id or None,
+                    run_id=run_id or None,
                     notes=notes or None,
                     filename=file.filename,
                     data=data,
@@ -123,7 +123,7 @@ def create_app(cfg) -> Flask:
                     "status": "ok",
                     "id": row.id,
                     "created_at": str(row.created_at),
-                    "experiment_id": row.experiment_id,
+                    "run_id": row.run_id,
                 })
         except Exception as e:
             return jsonify({"status": "error", "error": str(e)}), 500
@@ -147,7 +147,7 @@ def create_app(cfg) -> Flask:
             items = [
                 {
                     "name": r.name,
-                    "experiment_id": r.experiment_id,
+                    "run_id": r.run_id,
                     "notes": r.notes,
                     "created_at": str(r.created_at),
                 }
@@ -163,7 +163,7 @@ def create_app(cfg) -> Flask:
         payload = request.get_json(silent=True) or request.form
         hash_id = (payload.get("hashID") or "").strip()
         name = (payload.get("name") or "").strip()
-        experiment_id = (payload.get("experimentID") or "").strip()
+        run_id = (payload.get("runID") or "").strip()
 
         if not hash_id or not name:
             return jsonify({"status": "error", "error": "hashID and name are required"}), 400
@@ -173,8 +173,9 @@ def create_app(cfg) -> Flask:
                 Result.hash_id == hash_id,
                 Result.name == name
             )
-            if experiment_id:
-                stmt = stmt.where(Result.experiment_id == experiment_id)
+            if run_id:
+                stmt = stmt.where(Result.run_id == run_id)
+
 
             stmt = stmt.order_by(desc(Result.created_at)).limit(1)
             r = ses.execute(stmt).scalar_one_or_none()
@@ -186,7 +187,7 @@ def create_app(cfg) -> Flask:
                 "notes": r.notes,
                 "filename": r.filename,
                 "created_at": str(r.created_at),
-                "experiment_id": r.experiment_id,
+                "run_id": r.run_id,
                 "data_b64": base64.b64encode(r.data).decode("ascii"),
             })
 

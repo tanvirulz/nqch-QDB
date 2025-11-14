@@ -243,7 +243,7 @@ def results_upload(
     name: str,
     notes: str,
     files: List[str],
-    experimentID: Optional[str] = None,  # NEW
+    runID: Optional[str] = None,  # NEW
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
 ) -> dict:
@@ -255,7 +255,7 @@ def results_upload(
         name: Required. Logical name/group for this particular result.
         notes: Free-form notes.
         files: List of file paths to include in the ZIP.
-        experimentID: Optional string to tag this result with an experiment.
+        runID: Optional string to tag this result with an run.
         server_url: Override server URL; otherwise use stored default.
         api_token: Override API token; otherwise use stored default.
 
@@ -265,7 +265,7 @@ def results_upload(
             "status": "ok",
             "id": <int>,
             "created_at": "<timestamp>",
-            "experiment_id": "<experimentID or null>"
+            "run_id": "<runID or null>"
           }
     """
     server_url, api_token = _get_defaults(server_url, api_token)
@@ -292,9 +292,10 @@ def results_upload(
         "archive": ("bundle.zip", zip_bytes, "application/zip"),
     }
 
-    # NEW: only send experimentID if provided
-    if experimentID is not None:
-        multipart["experimentID"] = (None, experimentID)
+    # NEW: only send runID if provided
+    if runID is not None:
+        multipart["runID"] = (None, runID)
+
 
     r = requests.post(
         url,
@@ -318,7 +319,7 @@ def results_list(
     Returns a list of dicts, newest first:
       {
         "name": str,
-        "experiment_id": Optional[str],  # NEW
+        "run_id": Optional[str],  # NEW
         "notes": Optional[str],
         "created_at": str,
       }
@@ -341,18 +342,18 @@ def results_list(
 def results_download(
     hashID: str,
     name: str,
-    experimentID: Optional[str] = None,  # NEW
+    runID: Optional[str] = None,  # NEW
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
 ) -> Tuple[Optional[str], str, str, Optional[str], bytes]:
     """
     Download the most recent result matching (hashID, name),
-    and optionally filter by experimentID.
+    and optionally filter by runID.
 
     Args:
         hashID: Required identifier group.
         name: Result name to download.
-        experimentID: Optional filter; only match results from this experiment.
+        runID: Optional filter; only match results from this run.
         server_url, api_token: Overrides.
 
     Returns:
@@ -360,7 +361,7 @@ def results_download(
             notes,          # Optional[str]
             filename,       # str
             created_at,     # str
-            experiment_id,  # Optional[str]
+            run_id,         # Optional[str]
             data_bytes      # bytes
         )
     """
@@ -368,8 +369,9 @@ def results_download(
     url = server_url + "/results/download"
 
     payload = {"hashID": hashID, "name": name}
-    if experimentID is not None:  # send only if provided
-        payload["experimentID"] = experimentID
+    if runID is not None:
+        payload["runID"] = runID
+
 
     r = requests.post(
         url,
@@ -387,7 +389,7 @@ def results_download(
         payload.get("notes"),
         payload["filename"],
         payload["created_at"],
-        payload.get("experiment_id"),
+        payload.get("run_id"),
         data_bytes,
     )
 
