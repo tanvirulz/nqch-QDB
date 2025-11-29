@@ -81,6 +81,7 @@ def create_app(cfg) -> Flask:
                 "run_id": row.run_id,
                 "created_at": str(row.created_at),
             })
+        
     @app.get("/bestruns/list")
     def bestruns_list():
         if not _check_auth(request, cfg.API_TOKEN):
@@ -125,21 +126,51 @@ def create_app(cfg) -> Flask:
     def cal_upload():
         if not _check_auth(request, cfg.API_TOKEN):
             return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
         hash_id = (request.form.get("hashID") or "").strip()
         notes = (request.form.get("notes") or "").strip()
         file = request.files.get("archive")
+
         if not hash_id:
             return jsonify({"status": "error", "error": "hashID is required"}), 400
         if not file or file.filename == "":
             return jsonify({"status": "error", "error": "archive file is required"}), 400
+
         data = file.read()
         try:
             with SessionLocal() as ses:
-                row = Calibration(hash_id=hash_id, notes=notes or None, filename=file.filename, data=data)
-                ses.add(row); ses.commit(); ses.refresh(row)
-                return jsonify({"status": "ok", "id": row.id, "created_at": str(row.created_at)})
+                # Check if a calibration with this hashID already exists
+                existing = (
+                    ses.query(Calibration)
+                    .filter(Calibration.hash_id == hash_id)
+                    .order_by(Calibration.created_at.desc())
+                    .first()
+                )
+                if existing is not None:
+                    return jsonify({
+                        "status": "presaved",
+                        "id": existing.id,
+                        "created_at": str(existing.created_at),
+                    })
+
+                # If not found, create a new calibration as before
+                row = Calibration(
+                    hash_id=hash_id,
+                    notes=notes or None,
+                    filename=file.filename,
+                    data=data,
+                )
+                ses.add(row)
+                ses.commit()
+                ses.refresh(row)
+                return jsonify({
+                    "status": "ok",
+                    "id": row.id,
+                    "created_at": str(row.created_at),
+                })
         except Exception as e:
             return jsonify({"status": "error", "error": str(e)}), 500
+
 
     @app.get("/calibrations/list")
     def cal_list():
@@ -203,8 +234,29 @@ def create_app(cfg) -> Flask:
             return jsonify({"status": "error", "error": "archive file is required"}), 400
 
         data = file.read()
+
         try:
             with SessionLocal() as ses:
+
+                # Check if an identical result already exists
+                existing = (
+                    ses.query(Result)
+                    .filter(Result.hash_id == hash_id)
+                    .filter(Result.name == name)
+                    .filter(Result.run_id == (run_id or None))
+                    .order_by(Result.created_at.desc())
+                    .first()
+                )
+
+                if existing is not None:
+                    return jsonify({
+                        "status": "presaved",
+                        "id": existing.id,
+                        "created_at": str(existing.created_at),
+                        "run_id": existing.run_id,
+                    })
+
+                # Otherwise insert new row (original behavior)
                 row = Result(
                     hash_id=hash_id,
                     name=name,
@@ -223,8 +275,10 @@ def create_app(cfg) -> Flask:
                     "created_at": str(row.created_at),
                     "run_id": row.run_id,
                 })
+
         except Exception as e:
             return jsonify({"status": "error", "error": str(e)}), 500
+
 
     @app.get("/results/list")
     def results_list():
