@@ -98,55 +98,76 @@ def _auth_headers(api_token: Optional[str]) -> dict:
 def calibrations_upload(
     hashID: str,
     notes: str,
-    files: List[str],
+    calibrations_folder: str,
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
 ) -> dict:
-    """Create a ZIP from `files` and upload it as a calibration bundle.
-
-    This bundles all given files into an in-memory ZIP archive and posts it to
-    the server's `/calibrations/upload` endpoint along with `hashID` and `notes`.
-    If `api_token` is provided (or saved in the client config), it is sent as
-    a Bearer token.
+    """
+    Create a ZIP from <calibrations_folder>/<hashID> (recursively) and upload
+    it as a calibration bundle.
 
     Args:
         hashID: Unique identifier for the calibration record.
         notes: Free-form notes associated with this upload.
-        files: List of file paths to include in the ZIP archive.
-        server_url: Base server URL; if omitted, uses saved config or defaults to
-            "http://127.0.0.1:5000".
-        api_token: Optional bearer token; if omitted, uses saved config.
+        calibrations_folder: Root folder containing hashID subfolders.
+                            Expected structure:
+                                calibrations_folder/
+                                    <hashID>/
+                                        ... files/subfolders ...
+        server_url: Base server URL.
+        api_token: Optional bearer token.
 
     Raises:
-        ValueError: If `files` is empty.
-        FileNotFoundError: If any file path does not exist.
-        requests.HTTPError: If the server returns an error response.
+        FileNotFoundError: If <calibrations_folder>/<hashID> does not exist.
+        NotADirectoryError: If it is not a directory.
+        requests.HTTPError: If the server returns an error.
 
     Returns:
-        dict: The server's JSON response, typically including:
-            {"status": "ok", "id": <int>, "created_at": "<timestamp>"}.
+        dict: Server JSON response.
     """
+
     server_url, api_token = _get_defaults(server_url, api_token)
 
-    if not files:
-        raise ValueError("Provide at least one file to upload.")
-    for p in files:
-        if not os.path.isfile(p):
-            raise FileNotFoundError(f"File not found: {p}")
+    # Expected folder structure: <calibrations_folder>/<hashID>
+    root = Path(calibrations_folder)
+    target_folder = root / hashID
 
+    if not target_folder.exists():
+        raise FileNotFoundError(f"Calibration subfolder not found: {target_folder}")
+    if not target_folder.is_dir():
+        raise NotADirectoryError(f"Path is not a directory: {target_folder}")
+
+    # Create in-memory ZIP of the hashID folder
     mem_zip = io.BytesIO()
     with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for p in files:
-            zf.write(p, arcname=os.path.basename(p))
-    mem_zip.seek(0)
+        for root, dirs, files in os.walk(target_folder):
+            for file in files:
+                file_path = Path(root) / file
+                arcname = file_path.relative_to(target_folder)
+                zf.write(file_path, arcname=str(arcname))
 
-    files_payload = {"archive": ("calibration_bundle.zip", mem_zip.read(), "application/zip")}
+    mem_zip.seek(0)
+    zip_data = mem_zip.read()
+
+    files_payload = {
+        "archive": ("calibration_bundle.zip", zip_data, "application/zip")
+    }
     data_payload = {"hashID": hashID, "notes": notes or ""}
     url = server_url + "/calibrations/upload"
-    resp = requests.post(url, data=data_payload, files=files_payload, headers=_auth_headers(api_token), timeout=300)
+
+    resp = requests.post(
+        url,
+        data=data_payload,
+        files=files_payload,
+        headers=_auth_headers(api_token),
+        timeout=300,
+    )
+
     if resp.status_code >= 400:
         raise requests.HTTPError(f"Upload failed ({resp.status_code}): {resp.text}")
+
     return resp.json()
+
 
 
 def calibrations_list(server_url: Optional[str] = None, api_token: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -178,34 +199,58 @@ def calibrations_list(server_url: Optional[str] = None, api_token: Optional[str]
 
 def calibrations_download(
     hashID: str,
+    output_folder: str,
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
 ) -> Tuple[Optional[str], str, str, bytes]:
-    """Download the latest calibration ZIP for a given `hashID`.
+    """
+    Download the latest calibration ZIP for a given `hashID`, save it into a
+    folder named <output_folder>/<hashID>, and unzip it there.
 
-    Args:
-        hashID: The calibration record identifier to fetch.
-        server_url: Optional override for the server base URL.
-        api_token: Optional override for the bearer token.
-
-    Raises:
-        requests.HTTPError: On server error or not found (4xx/5xx).
+    Behavior:
+      - If <output_folder>/<hashID> already exists:
+            prints "calibration exists, skipping download"
+            returns safely without downloading.
+      - Otherwise:
+            downloads the ZIP, creates the folder, unzips it.
 
     Returns:
-        Tuple of (notes, filename, data):
-          - notes (Optional[str]): Notes saved with the record.
-          - filename (str): Original ZIP filename returned by the server.
-          - created_at (str): UTC date-time for calibration entry to the db
-          - data (bytes): Raw ZIP file contents.
+        (notes, filename, created_at, data_bytes)
     """
+
     server_url, api_token = _get_defaults(server_url, api_token)
     url = server_url + "/calibrations/download"
-    r = requests.post(url, json={"hashID": hashID}, headers=_auth_headers(api_token), timeout=300)
+
+    # Check if folder already exists → skip download
+    target_dir = Path(output_folder) / hashID
+    if target_dir.exists():
+        print("calibration exists, skipping download")
+        return (None, "", "", b"")
+
+    # Request download from the server
+    r = requests.post(
+        url,
+        json={"hashID": hashID},
+        headers=_auth_headers(api_token),
+        timeout=300,
+    )
     if r.status_code >= 400:
-        raise requests.HTTPError(f"Download failed ({r.status_code}): {r.text}")
+        raise requests.HTTPError(
+            f"Download failed ({r.status_code}): {r.text}"
+        )
+
     payload = r.json()
-    data = base64.b64decode(payload["data_b64"])
-    return payload.get("notes"), payload["filename"], payload["created_at"], data
+
+    notes = payload.get("notes")
+    filename = payload["filename"]
+    created_at = payload["created_at"]
+    data_bytes = base64.b64decode(payload["data_b64"])
+
+    # Create <output_folder>/<hashID> and unzip
+    unzip_bytes_to_folder(data_bytes, str(target_dir))
+
+    return (notes, filename, created_at, data_bytes)
+
 
 
 def calibrations_get_latest(
@@ -242,20 +287,29 @@ def results_upload(
     hashID: str,
     name: str,
     notes: str,
-    files: List[str],
-    runID: Optional[str] = None,  # NEW
+    data_folder: str,
+    runID: str,
     server_url: Optional[str] = None,
-    api_token: Optional[str] = None
+    api_token: Optional[str] = None,
 ) -> dict:
     """
-    Create a ZIP from `files` and upload it as a "result" bundle.
+    Create a ZIP from the folder <data_folder>/<hashID>/<runID> and upload it
+    as a 'result' bundle.
+
+    Folder layout:
+        data_folder/
+            <hashID>/
+                <runID>/
+                    ... files and subfolders ...
 
     Args:
         hashID: Required. Identifier tying related results together.
-        name: Required. Logical name/group for this particular result.
+        name: Required. Logical name/group for this particular result. 
+                Use "experiment_group" if you are uploading a group of experiment results under a single runID
         notes: Free-form notes.
-        files: List of file paths to include in the ZIP.
-        runID: Optional string to tag this result with an run.
+        data_folder: Root data folder which contains hashID/runID subfolders.
+        runID: Required. The run identifier; must correspond to a subfolder
+               under <data_folder>/<hashID>.
         server_url: Override server URL; otherwise use stored default.
         api_token: Override API token; otherwise use stored default.
 
@@ -270,17 +324,29 @@ def results_upload(
     """
     server_url, api_token = _get_defaults(server_url, api_token)
 
-    if not files:
-        raise ValueError("No files provided for upload.")
+    if not runID:
+        raise ValueError("runID must be provided and non-empty.")
 
-    # create in-memory zip
+    # Target folder: <data_folder>/<hashID>/<runID>
+    root = Path(data_folder)
+    run_dir = root / hashID / runID
+
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run folder not found: {run_dir}")
+    if not run_dir.is_dir():
+        raise NotADirectoryError(f"Run path is not a directory: {run_dir}")
+
+    # Create in-memory ZIP from run_dir (recursive)
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
-        for p in files:
-            pth = Path(p)
-            if not pth.exists():
-                raise FileNotFoundError(f"File not found: {pth}")
-            zf.write(pth, arcname=pth.name)
+        for r, dirs, files in os.walk(run_dir):
+            r_path = Path(r)
+            for file in files:
+                full_path = r_path / file
+                # Store paths relative to run_dir inside the ZIP
+                arcname = full_path.relative_to(run_dir)
+                zf.write(full_path, arcname=str(arcname))
+
     mem.seek(0)
     zip_bytes = mem.read()
 
@@ -290,18 +356,14 @@ def results_upload(
         "name": (None, name),
         "notes": (None, notes or ""),
         "archive": ("bundle.zip", zip_bytes, "application/zip"),
+        "runID": (None, runID),
     }
-
-    # NEW: only send runID if provided
-    if runID is not None:
-        multipart["runID"] = (None, runID)
-
 
     r = requests.post(
         url,
         files=multipart,
         headers=_auth_headers(api_token),
-        timeout=300
+        timeout=300,
     )
     if r.status_code >= 400:
         raise requests.HTTPError(f"Upload failed ({r.status_code}): {r.text}")
@@ -342,56 +404,77 @@ def results_list(
 def results_download(
     hashID: str,
     name: str,
-    runID: Optional[str] = None,  # NEW
+    runID: str,
+    output_folder: str,
     server_url: Optional[str] = None,
-    api_token: Optional[str] = None
+    api_token: Optional[str] = None,
 ) -> Tuple[Optional[str], str, str, Optional[str], bytes]:
     """
-    Download the most recent result matching (hashID, name),
-    and optionally filter by runID.
+    Download the most recent result matching (hashID, name, runID),
+    create <output_folder>/<hashID>/<runID>, and unzip the archive there.
 
-    Args:
-        hashID: Required identifier group.
-        name: Result name to download.
-        runID: Optional filter; only match results from this run.
-        server_url, api_token: Overrides.
+    Behaviour:
+      - Target dir: <output_folder>/<hashID>/<runID>
+      - If that directory already exists:
+            prints "experiment data exists, skipping download"
+            returns (None, "", "", None, b"")
+      - Otherwise:
+            downloads, unzips into that directory, and returns
+            (notes, filename, created_at, run_id, data_bytes)
 
     Returns:
-        (
-            notes,          # Optional[str]
-            filename,       # str
-            created_at,     # str
-            run_id,         # Optional[str]
-            data_bytes      # bytes
-        )
+        Tuple of (notes, filename, created_at, run_id, data_bytes):
+          - notes (Optional[str]): Notes saved with the record.
+          - filename (str): Original ZIP filename from the server.
+          - created_at (str): UTC datetime string for the DB entry.
+          - run_id (Optional[str]): Run ID returned by the server.
+          - data_bytes (bytes): Raw ZIP file contents.
     """
+
     server_url, api_token = _get_defaults(server_url, api_token)
     url = server_url + "/results/download"
 
-    payload = {"hashID": hashID, "name": name}
-    if runID is not None:
-        payload["runID"] = runID
+    if not runID:
+        raise ValueError("runID must be provided and non-empty.")
 
+    # Target directory: <output_folder>/<hashID>/<runID>
+    target_dir = Path(output_folder) / hashID / runID
+
+    # If data already exists locally, skip download
+    if target_dir.exists():
+        print("experiment data exists, skipping download")
+        return (None, "", "", None, b"")
+
+    # Request from server
+    payload: Dict[str, Any] = {
+        "hashID": hashID,
+        "name": name,
+        "runID": runID,
+    }
 
     r = requests.post(
         url,
         json=payload,
         headers=_auth_headers(api_token),
-        timeout=300
+        timeout=300,
     )
     if r.status_code >= 400:
         raise requests.HTTPError(f"Download failed ({r.status_code}): {r.text}")
 
-    payload = r.json()
-    data_bytes = base64.b64decode(payload["data_b64"])
+    resp = r.json()
 
-    return (
-        payload.get("notes"),
-        payload["filename"],
-        payload["created_at"],
-        payload.get("run_id"),
-        data_bytes,
-    )
+    notes = resp.get("notes")
+    filename = resp["filename"]
+    created_at = resp["created_at"]
+    run_id = resp.get("run_id")
+    data_bytes = base64.b64decode(resp["data_b64"])
+
+    # Create folder and unzip there
+    unzip_bytes_to_folder(data_bytes, str(target_dir))
+
+    return (notes, filename, created_at, run_id, data_bytes)
+
+
 
 def set_best_run(
     calibrationHashID: str,
@@ -502,20 +585,33 @@ def get_best_n_runs(
         )
     return result
 
-def unpack(foldername: str, zipdata: bytes) -> None:
+def unzip_bytes_to_folder(zip_bytes: bytes, target_folder: str) -> None:
     """
-    Create a folder named `foldername` and unzip the given zip bytes into it.
+    Unzip in-memory ZIP data into a target folder.
 
     Args:
-        foldername: Path to the output folder.
-        zipdata: Bytes representing a .zip archive.
+        zip_bytes: Raw ZIP file bytes.
+        target_folder: Destination folder to extract into.
     """
-    # Ensure the folder exists
-    os.makedirs(foldername, exist_ok=True)
+    os.makedirs(target_folder, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        zf.extractall(path=target_folder)
 
-    # Wrap the raw zipdata in a BytesIO and extract
-    with zipfile.ZipFile(io.BytesIO(zipdata)) as zf:
-        zf.extractall(path=foldername)
+
+# def unpack(foldername: str, zipdata: bytes) -> None:
+#     """
+#     Create a folder named `foldername` and unzip the given zip bytes into it.
+
+#     Args:
+#         foldername: Path to the output folder.
+#         zipdata: Bytes representing a .zip archive.
+#     """
+#     # Ensure the folder exists
+#     os.makedirs(foldername, exist_ok=True)
+
+#     # Wrap the raw zipdata in a BytesIO and extract
+#     with zipfile.ZipFile(io.BytesIO(zipdata)) as zf:
+#         zf.extractall(path=foldername)
     
 def test():
     print ("import works!")
