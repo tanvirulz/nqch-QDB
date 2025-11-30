@@ -90,4 +90,5 @@ htmlcov/
 
 # Local data
 data/
+download_data_test/
 *.zip
