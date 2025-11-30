@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Dict, Any, List
 import requests
 import time 
 from tabulate import tabulate
+import re
 
 
 CFG_PATHS = [
@@ -411,52 +412,85 @@ def results_upload(
         raise requests.HTTPError(f"Upload failed ({r.status_code}): {r.text}")
     return r.json()
 
+
+
 def upload_all_experiment_runs(data_folder: str) -> None:
     """
-    Upload experiment-run data for all experiment groups within the given folder.
+    Upload experiment-run data for all experiment groups within the given directory,
+    processing experiment-run folders in increasing numeric order.
 
     This function expects the following directory structure:
 
         data_folder/
             <hashID_40_chars>/
-                <runID_14_chars>/
+                <runID_14_chars>/     (runID may include non-numeric characters)
                     ... data files ...
 
-    It identifies valid experiment groups by checking for subfolder names of
-    exactly 40 characters. Inside each such group folder, it further looks
-    for experiment-run subfolders whose names are exactly 14 characters long.
-
-    For each matching run directory, it calls `results_upload()` with:
-      - hashID = experiment group folder name
-      - runID  = experiment run folder name
-      - data_folder = full path to the root data directory
-
-    A 100 ms delay is inserted after each upload to avoid API overload.
+    Behavior
+    --------
+    * The function scans `data_folder` for subfolders whose names are exactly
+      40 characters long — these are treated as experiment group IDs (hashID).
+    * Inside each experiment group folder, it identifies valid experiment-run
+      folders whose names are exactly 14 characters long.
+    * For each run folder, the function attempts to extract a numeric value:
+          - If runID is fully numeric → use int(runID)
+          - Else → extract the first integer substring using regex
+          - If no digits exist → the run is skipped
+    * Experiment runs are sorted by the extracted integer key.
+    * For each sorted run folder, the function calls:
+          results_upload(hashID=<group>, runID=<run>, data_folder=<root>)
+    * Responses are collected and shown in a summary table.
 
     Parameters
     ----------
     data_folder : str
         Path to the root directory containing experiment groups and run subfolders.
 
-    Returns
-    -------
-    None
+    Notes
+    -----
+    * This allows run IDs like:
+          "00000000000042"
+          "run_0015_data"
+          "abc123xyz789"
+      and sorts them by the extracted integer.
     """
+
+    def extract_int_from_string(s: str) -> int | None:
+        """Return the first integer found in a string, or None if no digits exist."""
+        match = re.search(r"\d+", s)
+        return int(match.group()) if match else None
+
     data_dir = Path(data_folder)
     resp_list = []
+
     for subfolder in data_dir.iterdir():
         if subfolder.is_dir() and len(subfolder.name) == 40:
+
+            # Collect valid experiment-run directories + extracted integer
+            experun_dirs = []
             for exprun in subfolder.iterdir():
                 if exprun.is_dir() and len(exprun.name) == 14:
+                    val = extract_int_from_string(exprun.name)
+                    if val is not None:
+                        experun_dirs.append((val, exprun))
+                    else:
+                        print(f"Skipping {exprun.name!r} — no integer found.")
 
-                    resp = results_upload(
-                        hashID=subfolder.name,
-                        runID=exprun.name,
-                        data_folder=data_folder
-                    )
-                    resp["hashID"] = subfolder.name
-                    resp_list.append(resp)
-                    # time.sleep(0.1)  # 100 ms delay
+            # Sort by extracted integer value
+            experun_dirs.sort(key=lambda x: x[0])
+
+            # Upload in sorted order
+            for _, exprun in experun_dirs:
+                resp = results_upload(
+                    hashID=subfolder.name,
+                    runID=exprun.name,
+                    data_folder=data_folder
+                )
+                resp["hashID"] = subfolder.name
+                resp_list.append(resp)
+
+                # time.sleep(0.1)
+
     print_table(resp_list)
 
 
