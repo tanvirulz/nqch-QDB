@@ -149,6 +149,7 @@ def create_app(cfg) -> Flask:
                 if existing is not None:
                     return jsonify({
                         "status": "presaved",
+                        "hashID": hash_id,
                         "id": existing.id,
                         "created_at": str(existing.created_at),
                     })
@@ -165,6 +166,7 @@ def create_app(cfg) -> Flask:
                 ses.refresh(row)
                 return jsonify({
                     "status": "ok",
+                    "hashID": hash_id,
                     "id": row.id,
                     "created_at": str(row.created_at),
                 })
@@ -176,13 +178,29 @@ def create_app(cfg) -> Flask:
     def cal_list():
         if not _check_auth(request, cfg.API_TOKEN):
             return jsonify({"status": "error", "error": "Unauthorized"}), 401
+
         with SessionLocal() as ses:
-            rows = ses.execute(select(Calibration).order_by(desc(Calibration.created_at))).scalars().all()
+            rows = (
+                ses.execute(
+                    select(Calibration)
+                    .order_by(desc(Calibration.created_at))
+                    .limit(20)                     # Only latest 20
+                )
+                .scalars()
+                .all()
+            )
+
             items = [{
-                "id": r.id, "hashID": r.hash_id, "notes": r.notes,
-                "created_at": str(r.created_at), "filename": r.filename, "size": len(r.data) if r.data else 0
+                "id": r.id,
+                "hashID": r.hash_id,
+                "notes": r.notes,
+                "created_at": str(r.created_at),
+                # "filename": r.filename,
+                "size": len(r.data) if r.data else 0
             } for r in rows]
+
             return jsonify({"items": items})
+
 
     @app.get("/calibrations/latest")
     def cal_latest():

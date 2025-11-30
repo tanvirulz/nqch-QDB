@@ -6,6 +6,9 @@ import zipfile
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 import requests
+import time 
+from tabulate import tabulate
+
 
 CFG_PATHS = [
     Path(os.getenv("QIBO_CLIENT_CONFIG", "")) if os.getenv("QIBO_CLIENT_CONFIG") else None,
@@ -97,8 +100,8 @@ def _auth_headers(api_token: Optional[str]) -> dict:
 
 def calibrations_upload(
     hashID: str,
-    notes: str,
     calibrations_folder: str,
+    notes: Optional[str] = "calibration params",
     server_url: Optional[str] = None,
     api_token: Optional[str] = None
 ) -> dict:
@@ -169,9 +172,48 @@ def calibrations_upload(
     return resp.json()
 
 
+def upload_all_calibrations(calibrations_folder: str) -> None:
+    """
+    Upload all calibration directories contained in the given folder.
+
+    This function scans the specified `calibrations_folder` for subdirectories
+    whose names are exactly 40 characters long (treated as a unique hash ID).
+    For each such subfolder, it calls `calibrations_upload()` with:
+      - hashID  = subfolder name
+      - notes   = "calibration params"
+      - calibrations_folder = full path to the calibrations directory
+
+    A short 100 ms delay is inserted after each upload to avoid overloading
+    the API or server.
+
+    Parameters
+    ----------
+    calibrations_folder : str
+        Path to the root folder containing calibration subdirectories.
+
+    Returns
+    -------
+    None
+    """
+    calibrations_dir = Path(calibrations_folder)
+    resp_list = []
+    for subfolder in calibrations_dir.iterdir():
+        if subfolder.is_dir() and len(subfolder.name) == 40:
+            print(subfolder.name)
+            print(str(subfolder))
+
+            resp = calibrations_upload(
+                hashID=subfolder.name,
+                calibrations_folder=calibrations_folder
+            )
+            # print(resp)
+            resp_list.append(resp)
+            # time.sleep(0.1)  # 100 ms delay
+    print_table(resp_list)
+
 
 def calibrations_list(server_url: Optional[str] = None, api_token: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Return metadata for all calibration uploads (newest first).
+    """Return metadata for last 20 calibration uploads (newest first).
 
     Args:
         server_url: Optional override for the server base URL.
@@ -248,7 +290,7 @@ def calibrations_download(
 
     # Create <output_folder>/<hashID> and unzip
     unzip_bytes_to_folder(data_bytes, str(target_dir))
-
+    print ("calibration downloaded")
     return (notes, filename, created_at, data_bytes)
 
 
@@ -285,10 +327,10 @@ def calibrations_get_latest(
 
 def results_upload(
     hashID: str,
-    name: str,
-    notes: str,
-    data_folder: str,
     runID: str,
+    data_folder: str,
+    name: Optional[str] = "experiment_group",
+    notes: Optional[str] = "benchmarking",
     server_url: Optional[str] = None,
     api_token: Optional[str] = None,
 ) -> dict:
@@ -369,6 +411,54 @@ def results_upload(
         raise requests.HTTPError(f"Upload failed ({r.status_code}): {r.text}")
     return r.json()
 
+def upload_all_experiment_runs(data_folder: str) -> None:
+    """
+    Upload experiment-run data for all experiment groups within the given folder.
+
+    This function expects the following directory structure:
+
+        data_folder/
+            <hashID_40_chars>/
+                <runID_14_chars>/
+                    ... data files ...
+
+    It identifies valid experiment groups by checking for subfolder names of
+    exactly 40 characters. Inside each such group folder, it further looks
+    for experiment-run subfolders whose names are exactly 14 characters long.
+
+    For each matching run directory, it calls `results_upload()` with:
+      - hashID = experiment group folder name
+      - runID  = experiment run folder name
+      - data_folder = full path to the root data directory
+
+    A 100 ms delay is inserted after each upload to avoid API overload.
+
+    Parameters
+    ----------
+    data_folder : str
+        Path to the root directory containing experiment groups and run subfolders.
+
+    Returns
+    -------
+    None
+    """
+    data_dir = Path(data_folder)
+    resp_list = []
+    for subfolder in data_dir.iterdir():
+        if subfolder.is_dir() and len(subfolder.name) == 40:
+            for exprun in subfolder.iterdir():
+                if exprun.is_dir() and len(exprun.name) == 14:
+
+                    resp = results_upload(
+                        hashID=subfolder.name,
+                        runID=exprun.name,
+                        data_folder=data_folder
+                    )
+                    resp["hashID"] = subfolder.name
+                    resp_list.append(resp)
+                    # time.sleep(0.1)  # 100 ms delay
+    print_table(resp_list)
+
 
 def results_list(
     hashID: str,
@@ -403,9 +493,9 @@ def results_list(
 
 def results_download(
     hashID: str,
-    name: str,
     runID: str,
     output_folder: str,
+    name: Optional[str] = "experiment_group",
     server_url: Optional[str] = None,
     api_token: Optional[str] = None,
 ) -> Tuple[Optional[str], str, str, Optional[str], bytes]:
@@ -471,7 +561,7 @@ def results_download(
 
     # Create folder and unzip there
     unzip_bytes_to_folder(data_bytes, str(target_dir))
-
+    print ("experiment data downloaded")
     return (notes, filename, created_at, run_id, data_bytes)
 
 
@@ -597,21 +687,9 @@ def unzip_bytes_to_folder(zip_bytes: bytes, target_folder: str) -> None:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         zf.extractall(path=target_folder)
 
+def print_table(data):
+    print(tabulate(data, headers="keys", tablefmt="grid"))
 
-# def unpack(foldername: str, zipdata: bytes) -> None:
-#     """
-#     Create a folder named `foldername` and unzip the given zip bytes into it.
-
-#     Args:
-#         foldername: Path to the output folder.
-#         zipdata: Bytes representing a .zip archive.
-#     """
-#     # Ensure the folder exists
-#     os.makedirs(foldername, exist_ok=True)
-
-#     # Wrap the raw zipdata in a BytesIO and extract
-#     with zipfile.ZipFile(io.BytesIO(zipdata)) as zf:
-#         zf.extractall(path=foldername)
     
 def test():
     print ("import works!")
