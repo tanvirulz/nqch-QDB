@@ -200,8 +200,8 @@ def upload_all_calibrations(calibrations_folder: str) -> None:
     resp_list = []
     for subfolder in calibrations_dir.iterdir():
         if subfolder.is_dir() and len(subfolder.name) == 40:
-            print(subfolder.name)
-            print(str(subfolder))
+            # print(subfolder.name)
+            # print(str(subfolder))
 
             resp = calibrations_upload(
                 hashID=subfolder.name,
@@ -210,7 +210,7 @@ def upload_all_calibrations(calibrations_folder: str) -> None:
             # print(resp)
             resp_list.append(resp)
             # time.sleep(0.1)  # 100 ms delay
-    print_table(resp_list)
+    # print_table(resp_list)
 
 
 def calibrations_list(server_url: Optional[str] = None, api_token: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -267,7 +267,7 @@ def calibrations_download(
     # Check if folder already exists → skip download
     target_dir = Path(output_folder) / hashID
     if target_dir.exists():
-        print("calibration exists, skipping download")
+        # print("calibration exists, skipping download")
         return (None, "", "", b"")
 
     # Request download from the server
@@ -291,7 +291,7 @@ def calibrations_download(
 
     # Create <output_folder>/<hashID> and unzip
     unzip_bytes_to_folder(data_bytes, str(target_dir))
-    print ("calibration downloaded")
+    # print ("calibration downloaded")
     return (notes, filename, created_at, data_bytes)
 
 
@@ -474,7 +474,8 @@ def upload_all_experiment_runs(data_folder: str) -> None:
                     if val is not None:
                         experun_dirs.append((val, exprun))
                     else:
-                        print(f"Skipping {exprun.name!r} — no integer found.")
+                        pass 
+                        # print(f"Skipping {exprun.name!r} — no integer found.")
 
             # Sort by extracted integer value
             experun_dirs.sort(key=lambda x: x[0])
@@ -490,8 +491,8 @@ def upload_all_experiment_runs(data_folder: str) -> None:
                 resp_list.append(resp)
 
                 # time.sleep(0.1)
-
-    print_table(resp_list)
+    return resp_list
+    # print_table(resp_list)
 
 
 def results_list(
@@ -566,7 +567,7 @@ def results_download(
 
     # If data already exists locally, skip download
     if target_dir.exists():
-        print("experiment data exists, skipping download")
+        # print("experiment data exists, skipping download")
         return (None, "", "", None, b"")
 
     # Request from server
@@ -595,7 +596,7 @@ def results_download(
 
     # Create folder and unzip there
     unzip_bytes_to_folder(data_bytes, str(target_dir))
-    print ("experiment data downloaded")
+    # print ("experiment data downloaded")
     return (notes, filename, created_at, run_id, data_bytes)
 
 
