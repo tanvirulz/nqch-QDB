@@ -129,7 +129,7 @@ import client
 resp = client.calibrations_upload(
     hashID="0123456789abcdef0123456789abcdef01234567",
     calibrations_folder="/path/to/calibrations_folder",
-    notes="calibration params for telescope run 2026-02-02"
+    notes="calibration params for run 2026-02-02"
 )
 
 print(resp)
